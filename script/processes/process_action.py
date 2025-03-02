@@ -1,5 +1,7 @@
 import pandas as pd
 import json
+import os
+from datetime import datetime
 from typing import Dict, Union, List, Tuple
 
 
@@ -80,14 +82,40 @@ def create_action_summary_row(action_df: pd.DataFrame, session_id: str) -> pd.Se
     
     return pd.Series(summary)
 
+def save_summary(summary_df: pd.DataFrame, base_name: str = "session_summaries") -> str:
+    """
+    Save the summary DataFrame to CSV with timestamp.
+    
+    Args:
+        summary_df (pd.DataFrame): DataFrame to save
+        base_name (str): Base name for the file
+        
+    Returns:
+        str: Path to the saved file
+    """
+    # Create output directory if it doesn't exist
+    output_dir = "outputs"
+    os.makedirs(output_dir, exist_ok=True)
+    
+    # Create filename with timestamp
+    timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+    filename = f"{base_name}_{timestamp}.csv"
+    output_path = os.path.join(output_dir, filename)
+    
+    # Save to CSV
+    summary_df.to_csv(output_path, index=False)
+    return output_path
+
 def process_multiple_sessions(session_ids: list[str], 
-                            action_data_dict: Dict[str, pd.DataFrame]) -> pd.DataFrame:
+                            action_data_dict: Dict[str, pd.DataFrame],
+                            save_output: bool = True) -> pd.DataFrame:
     """
     Process multiple session files and create a summary table.
     
     Args:
         session_ids (list[str]): List of session IDs to process
         action_data_dict (Dict[str, pd.DataFrame]): Dictionary mapping session_ids to their action DataFrames
+        save_output (bool, optional): Whether to save the output to CSV. Defaults to True.
         
     Returns:
         pd.DataFrame: Summary table where each row represents one session
@@ -103,5 +131,10 @@ def process_multiple_sessions(session_ids: list[str],
     
     if not summary_df.empty:
         summary_df = summary_df.sort_values('session_id')
+        
+        # Save if requested
+        if save_output:
+            output_path = save_summary(summary_df)
+            print(f"\nSaved summary table to: {output_path}")
     
     return summary_df
