@@ -167,6 +167,69 @@ def extract_l2_token_data(action_df: pd.DataFrame) -> Dict[str, Dict[str, Union[
     
     return token_data
 
+def extract_l3_token_data(action_df: pd.DataFrame) -> Dict[str, Dict[str, Union[str, int, float]]]:
+    """
+    Extract L3 token data including start time and end time for each of the 4 ordered stops.
+    
+    L3 has exactly 4 ordered stops (O1, O2, O3, O4) with start and end events.
+    The order is important and defined in the L3_init event.
+    
+    Args:
+        action_df (pd.DataFrame): Action log DataFrame
+        
+    Returns:
+        Dict: Dictionary with ordered stops data in format:
+            {
+                "O1": {
+                    "token": value, (e.g. "3")
+                    "startTime": timestamp,
+                    "endTime": timestamp
+                },
+                "O2": {...},
+                "O3": {...},
+                "O4": {...}
+            }
+    """
+    # Initialize with the 4 ordered stops
+    ordered_stops = {f"O{i}": {"token": None, "startTime": None, "endTime": None} for i in range(1, 5)}
+    
+    # Ensure timestamp is datetime
+    if 'timestamp' in action_df.columns:
+        action_df['timestamp'] = pd.to_datetime(action_df['timestamp'])
+    
+    # Extract the sequence from L3_init
+    init_event = action_df[action_df['type'] == 'L3_init']
+    if not init_event.empty:
+        # Get the tokens in the correct order
+        tokens = init_event.iloc[0]['value'].split(';')
+        # Store tokens in order (O1, O2, O3, O4)
+        for i, token in enumerate(tokens[:4], 1):
+            ordered_stops[f"O{i}"]["token"] = token.strip()
+    
+    # Extract start and end times
+    for i in range(1, 5):
+        stop_key = f"O{i}"
+        token = ordered_stops[stop_key]["token"]
+        
+        if token:
+            # Find start event for this token
+            start_event = action_df[
+                (action_df['type'] == 'L3_start') & 
+                (action_df['value'] == token)
+            ]
+            if not start_event.empty:
+                ordered_stops[stop_key]["startTime"] = start_event.iloc[0]['timestamp']
+            
+            # Find end event for this token
+            end_event = action_df[
+                (action_df['type'] == 'L3_end') & 
+                (action_df['value'] == token)
+            ]
+            if not end_event.empty:
+                ordered_stops[stop_key]["endTime"] = end_event.iloc[0]['timestamp']
+    
+    return ordered_stops
+
 def create_action_summary_row(action_df: pd.DataFrame, session_id: str) -> pd.Series:
     """
     Create a summary row for a single action log file.
@@ -229,6 +292,22 @@ def create_action_summary_row(action_df: pd.DataFrame, session_id: str) -> pd.Se
         summary[f'L2__{token}__startTime'] = data['startTime']
         summary[f'L2__{token}__endTime'] = data['endTime']
         summary[f'L2__{token}__value'] = data['value']
+    
+    # Extract L3 ordered stops data
+    l3_ordered_stops = extract_l3_token_data(action_df)
+    
+    # Add L3 ordered stops to summary
+    for stop_key, data in l3_ordered_stops.items():
+        summary[f'L3__{stop_key}__L2token'] = data['token']  # The actual token number
+        summary[f'L3__{stop_key}__startTime'] = data['startTime']
+        summary[f'L3__{stop_key}__endTime'] = data['endTime']
+        
+        # Calculate duration if both times are available
+        if data['startTime'] is not None and data['endTime'] is not None:
+            duration = (data['endTime'] - data['startTime']).total_seconds()
+            summary[f'L3__{stop_key}__duration'] = duration
+        else:
+            summary[f'L3__{stop_key}__duration'] = None
     
     return pd.Series(summary)
 
