@@ -101,6 +101,72 @@ def extract_l1_token_data(action_df: pd.DataFrame) -> Dict[str, Dict[str, Union[
     
     return token_data
 
+def extract_l2_token_data(action_df: pd.DataFrame) -> Dict[str, Dict[str, Union[str, int, float]]]:
+    """
+    Extract L2 token data including start time, end time, and response value.
+    
+    L2 tokens are simple numbers (1-16).
+    Each token has start event (L2_start) and response event (L2_response).
+    
+    Args:
+        action_df (pd.DataFrame): Action log DataFrame
+        
+    Returns:
+        Dict: Dictionary with token data in format:
+            {
+                "1": {
+                    "startTime": timestamp,
+                    "endTime": timestamp, 
+                    "value": int
+                },
+                ...
+            }
+    """
+    # Define all possible tokens for L2 (1-16)
+    possible_tokens = [str(i) for i in range(1, 17)]
+    
+    # Filter to only tokens that appear in the data
+    valid_tokens = []
+    for token in possible_tokens:
+        # Get L2 events for this token
+        l2_events = action_df[
+            (action_df['type'].str.startswith('L2_')) & 
+            (action_df['value'].str.startswith(token + ';') | (action_df['value'] == token))
+        ]
+        if not l2_events.empty:
+            valid_tokens.append(token)
+    
+    # Initialize token data dictionary
+    token_data = {token: {"startTime": None, "endTime": None, "value": None} for token in valid_tokens}
+    
+    # Ensure timestamp is datetime
+    if 'timestamp' in action_df.columns:
+        action_df['timestamp'] = pd.to_datetime(action_df['timestamp'])
+    
+    # Process start events
+    start_events = action_df[action_df['type'] == 'L2_start']
+    for _, row in start_events.iterrows():
+        token = row['value'].strip()
+        if token in token_data:
+            token_data[token]['startTime'] = row['timestamp']
+    
+    # Process response events
+    response_events = action_df[action_df['type'] == 'L2_response']
+    for _, row in response_events.iterrows():
+        # Parse the response value format: "token; value; time_ms"
+        parts = row['value'].split(';')
+        if len(parts) >= 2:
+            token = parts[0].strip()
+            if token in token_data:
+                token_data[token]['endTime'] = row['timestamp']
+                try:
+                    token_data[token]['value'] = int(parts[1].strip())
+                except ValueError:
+                    # Handle case where value might not be a valid integer
+                    token_data[token]['value'] = None
+    
+    return token_data
+
 def create_action_summary_row(action_df: pd.DataFrame, session_id: str) -> pd.Series:
     """
     Create a summary row for a single action log file.
@@ -147,13 +213,22 @@ def create_action_summary_row(action_df: pd.DataFrame, session_id: str) -> pd.Se
         summary['vali_avg_points'] = float('nan')
     
     # Extract L1 token data
-    token_data = extract_l1_token_data(action_df)
+    l1_token_data = extract_l1_token_data(action_df)
     
-    # Add token data to summary with L1__ prefix
-    for token, data in token_data.items():
+    # Add L1 token data to summary
+    for token, data in l1_token_data.items():
         summary[f'L1__{token}__startTime'] = data['startTime']
         summary[f'L1__{token}__endTime'] = data['endTime']
         summary[f'L1__{token}__value'] = data['value']
+    
+    # Extract L2 token data
+    l2_token_data = extract_l2_token_data(action_df)
+    
+    # Add L2 token data to summary
+    for token, data in l2_token_data.items():
+        summary[f'L2__{token}__startTime'] = data['startTime']
+        summary[f'L2__{token}__endTime'] = data['endTime']
+        summary[f'L2__{token}__value'] = data['value']
     
     return pd.Series(summary)
 
