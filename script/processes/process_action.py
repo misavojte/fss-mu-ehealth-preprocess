@@ -2,7 +2,7 @@ import pandas as pd
 import json
 import os
 from datetime import datetime
-from typing import Dict, Union, List, Tuple
+from typing import Dict, Union, List, Tuple, Optional
 
 
 def extract_validation_metrics(action_df: pd.DataFrame) -> Tuple[int, pd.DataFrame]:
@@ -21,10 +21,14 @@ def extract_validation_metrics(action_df: pd.DataFrame) -> Tuple[int, pd.DataFra
         return 0, pd.DataFrame()
     
     # Parse the validation values from JSON strings
-    validation_events['metrics'] = validation_events['value'].apply(json.loads)
-    validation_events['accuracy'] = validation_events['metrics'].apply(lambda x: x['accuracy'])
-    validation_events['precision'] = validation_events['metrics'].apply(lambda x: x['precision'])
-    validation_events['points'] = validation_events['metrics'].apply(lambda x: x['gazePointCount'])
+    validation_events['metrics'] = validation_events['value'].apply(
+        lambda x: json.loads(x) if x and x.strip() else {})
+    validation_events['accuracy'] = validation_events['metrics'].apply(
+        lambda x: x.get('accuracy', float('nan')))
+    validation_events['precision'] = validation_events['metrics'].apply(
+        lambda x: x.get('precision', float('nan')))
+    validation_events['points'] = validation_events['metrics'].apply(
+        lambda x: x.get('gazePointCount', float('nan')))
     
     # Count total validation attempts (divided by 5 points)
     total_validations = len(validation_events)
@@ -35,6 +39,68 @@ def extract_validation_metrics(action_df: pd.DataFrame) -> Tuple[int, pd.DataFra
     
     return validation_rounds, last_validations
 
+def extract_l1_token_data(action_df: pd.DataFrame) -> Dict[str, Dict[str, Union[str, int, float]]]:
+    """
+    Extract L1 token data including start time, end time, and response value.
+    
+    L1 tokens follow pattern t_XX_y where XX is a number and y is gender (m/f).
+    Each token has start event (L1_start) and response event (L1_response).
+    
+    Args:
+        action_df (pd.DataFrame): Action log DataFrame
+        
+    Returns:
+        Dict: Dictionary with token data in format:
+            {
+                "t_01_m": {
+                    "startTime": timestamp,
+                    "endTime": timestamp, 
+                    "value": int
+                },
+                ...
+            }
+    """
+    # Define all possible tokens
+    tokens = [f"t_{i:02d}_{g}" for i in range(1, 33) for g in ['m', 'f']]
+    
+    # Filter to only tokens that appear in the data
+    valid_tokens = []
+    for token in tokens:
+        # Check if this token appears in any value field
+        if action_df['value'].str.contains(token, regex=False).any():
+            valid_tokens.append(token)
+    
+    # Initialize token data dictionary
+    token_data = {token: {"startTime": None, "endTime": None, "value": None} for token in valid_tokens}
+    
+    # Ensure timestamp is datetime
+    if 'timestamp' in action_df.columns:
+        action_df['timestamp'] = pd.to_datetime(action_df['timestamp'])
+    
+    # Process start events
+    start_events = action_df[action_df['type'] == 'L1_start']
+    for _, row in start_events.iterrows():
+        token = row['value'].strip()
+        if token in token_data:
+            token_data[token]['startTime'] = row['timestamp']
+    
+    # Process response events
+    response_events = action_df[action_df['type'] == 'L1_response']
+    for _, row in response_events.iterrows():
+        # Parse the response value format: "t_XX_y; value; time_ms"
+        parts = row['value'].split(';')
+        if len(parts) >= 2:
+            token = parts[0].strip()
+            if token in token_data:
+                token_data[token]['endTime'] = row['timestamp']
+                try:
+                    token_data[token]['value'] = int(parts[1].strip())
+                except ValueError:
+                    # Handle case where value might not be a valid integer
+                    token_data[token]['value'] = None
+    
+    return token_data
+
 def create_action_summary_row(action_df: pd.DataFrame, session_id: str) -> pd.Series:
     """
     Create a summary row for a single action log file.
@@ -44,7 +110,7 @@ def create_action_summary_row(action_df: pd.DataFrame, session_id: str) -> pd.Se
         session_id (str): Session identifier
         
     Returns:
-        pd.Series: Summary row with validation metrics
+        pd.Series: Summary row with metrics
     """
     # Initialize with session ID
     summary = {
@@ -79,6 +145,15 @@ def create_action_summary_row(action_df: pd.DataFrame, session_id: str) -> pd.Se
         summary['vali_avg_accuracy'] = float('nan')
         summary['vali_avg_precision'] = float('nan')
         summary['vali_avg_points'] = float('nan')
+    
+    # Extract L1 token data
+    token_data = extract_l1_token_data(action_df)
+    
+    # Add token data to summary with L1__ prefix
+    for token, data in token_data.items():
+        summary[f'L1__{token}__startTime'] = data['startTime']
+        summary[f'L1__{token}__endTime'] = data['endTime']
+        summary[f'L1__{token}__value'] = data['value']
     
     return pd.Series(summary)
 
