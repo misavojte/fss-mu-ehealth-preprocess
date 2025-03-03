@@ -3,7 +3,7 @@ import os
 sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 from loaders import load_ehealth_data, load_session_ids
-from processes.process_gaze import process_multiple_gaze_sessions
+from script.processes.process_fixation import process_multiple_gaze_sessions
 import pandas as pd
 
 def main():

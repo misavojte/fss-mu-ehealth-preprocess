@@ -79,113 +79,86 @@ def preprocess_gaze_data(gaze_df: pd.DataFrame) -> pd.DataFrame:
     
     return processed_df
 
-def detect_fixations(gaze_df: pd.DataFrame, screen_params: Dict = None) -> pd.DataFrame:
+def detect_fixations(gaze_df: pd.DataFrame, i2mc_options: Dict = None) -> pd.DataFrame:
     """
     Detect fixations in preprocessed gaze data using the I2MC algorithm.
     
     Args:
         gaze_df (pd.DataFrame): Preprocessed gaze data with columns:
             time_ms, x, y, missing
-        screen_params (Dict, optional): Screen parameters like size and distance.
-            Defaults to reasonable values if not provided.
+        i2mc_options (Dict, optional): Dictionary containing all I2MC algorithm parameters.
+            If None, uses default values as specified below.
             
     Returns:
         pd.DataFrame: Detected fixations with their properties
     """
-    # Setup default screen parameters if not provided
-    if screen_params is None:
-        # Typical screen parameters - adjust as needed for your setup
-        screen_params = {
-            'resolution': [1920, 1080],  # Width, height in pixels
-            'size': [53, 30],            # Width, height in cm
-            'distance': 65,              # Participant distance from screen in cm
+    # Setup default I2MC parameters if not provided
+    if i2mc_options is None:
+        i2mc_options = {
+            # Required parameters
+            'xres': 1920,              # screen width in pixels
+            'yres': 1080,              # screen height in pixels
+            'freq': 150.0,             # sampling rate in Hz
+            'missingx': -1.0,          # value marking missing data
+            'missingy': -1.0,          # value marking missing data
+            'scrSz': [53, 30],         # screen size in cm [width, height]
+            'disttoscreen': 65,        # distance to screen in cm
+            
+            # Interpolation parameters
+            'windowtimeInterp': 0.1,   # max duration (s) for interpolation
+            'edgeSampInterp': 2,       # samples needed at edges for interpolation
+            'maxdisp': None,           # max displacement during interpolation (computed if None)
+            
+            # Clustering parameters
+            'windowtime': 0.2,         # time window for 2-means clustering
+            'steptime': 0.02,          # time window shift
+            'downsamples': [2, 5, 10], # downsample levels (can be empty: [])
+            'downsampFilter': False,   # use filter when downsampling
+            'chebyOrder': 8,           # order of Chebyshev filter
+            'maxerrors': 100,          # max clustering errors allowed
+            
+            # Fixation parameters
+            'cutoffstd': 2.0,         # number of STD for fixation threshold
+            'onoffsetThresh': 3.0,     # threshold for walk-back
+            'maxMergeDist': 30.0,      # max distance (pixels) for merging
+            'maxMergeTime': 30.0,      # max time (ms) for merging
+            'minFixDur': 40.0,         # minimum fixation duration (ms)
         }
-    
-    # Import I2MC function
-    sys.path.append(os.path.dirname(os.path.abspath(__file__)) + '/../..')
-    from I2MC import I2MC
+    else:
+        # Ensure required parameters are present
+        required_params = ['xres', 'yres', 'freq', 'missingx', 'missingy']
+        for param in required_params:
+            if param not in i2mc_options:
+                raise ValueError(f"Required parameter '{param}' missing from i2mc_options")
     
     try:
-        # Check if coordinates are fractional (0-1) or pixels
-        x_max = gaze_df['x'].max()
-        y_max = gaze_df['y'].max()
-        
-        # If coordinates are fractional (between 0-1), convert to pixels
-        if x_max <= 1.0 and y_max <= 1.0:
-            print("Detected fractional coordinates, converting to pixels...")
-            gaze_df['x'] = gaze_df['x'] * screen_params['resolution'][0]
-            gaze_df['y'] = gaze_df['y'] * screen_params['resolution'][1]
-        
-        # Replace NaN values with a specific missing value indicator (-1)
-        missing_value = -1.0
-        gaze_df['x'] = gaze_df['x'].fillna(missing_value)
-        gaze_df['y'] = gaze_df['y'].fillna(missing_value)
-        
-        # Prepare data in the format expected by I2MC
-        data_df = pd.DataFrame()
-        
-        # Add time column (expected to be in milliseconds)
-        data_df['time'] = gaze_df['time_ms']
-        
-        # Add average eye position (this is what we have in our preprocessed data)
-        data_df['average_X'] = gaze_df['x']
-        data_df['average_Y'] = gaze_df['y']
-        
-        # Set missing flag
-        data_df['missing'] = gaze_df['missing']
-        
         # Print data quality stats
         valid_samples = (~gaze_df['missing']).sum()
         total_samples = len(gaze_df)
         print(f"Data quality: {valid_samples}/{total_samples} valid samples ({valid_samples/total_samples*100:.1f}%)")
         
-        # Create options dictionary with exact parameter names from the I2MC code
-        options = {
-            # Required parameters
-            'xres': float(screen_params['resolution'][0]),
-            'yres': float(screen_params['resolution'][1]),
-            'missingx': missing_value,
-            'missingy': missing_value,
-            'freq': 150.0,  # sampling rate in Hz
-            
-            # Optional parameters for visual angle calculations
-            'scrSz': screen_params['size'],
-            'disttoscreen': screen_params['distance'],
-            
-            # Additional parameters for the algorithm with correct parameter names
-            'maxdisp': 0.8,               # maximum displacement during interpolation
-            'windowtimeInterp': 0.1,      # time window for interpolation (seconds)
-            'maxerrors': 100,             # maximum number of errors allowed in interpolation window
-            'downsamples': [2, 5, 10],    # list of factors to use for downsampling
-            'downsampFilter': 3,          # filter window size for downsampling
-            'minFixDur': 40               # minimum fixation duration in ms
-        }
+        # Print the real sampling rate
+        mean_sampling_rate = 1000/np.mean(np.diff(gaze_df['time_ms']))
+        print(f"Real Mean Sampling Rate: {mean_sampling_rate:.1f} Hz")
         
-        # Print the options being used
-        print("Using I2MC with parameters:")
-        for key, value in options.items():
-            print(f"  {key}: {value}")
+        # Prepare data in the format expected by I2MC
+        data_df = pd.DataFrame()
+        data_df['time'] = gaze_df['time_ms']
+        data_df['average_X'] = gaze_df['x']
+        data_df['average_Y'] = gaze_df['y']
+        data_df['missing'] = gaze_df['missing']
+        
+        # Import I2MC function
+        sys.path.append(os.path.dirname(os.path.abspath(__file__)) + '/../..')
+        from I2MC import I2MC
         
         # Call I2MC with DataFrame input
-        fix_results = I2MC(data_df, options)
-        
-        # Print result type for debugging
-        print(f"I2MC returned result of type: {type(fix_results)}")
-        
-        # Check if any fixations were detected - HANDLE TUPLE RETURN TYPE
-        if fix_results is None:
-            print("No fixation results returned by I2MC algorithm")
-            return pd.DataFrame()
+        fix_results = I2MC(data_df, i2mc_options)
         
         # Handle tuple return type (fixation data, other info)
         if isinstance(fix_results, tuple):
-            # Check length of tuple for safety
             if len(fix_results) > 0:
-                # First element should be the fixation data dictionary
                 fix_data = fix_results[0]
-                print(f"First tuple element is of type: {type(fix_data)}")
-                
-                # If first element is a dictionary with fixation data
                 if isinstance(fix_data, dict) and 'startT' in fix_data:
                     print(f"Detected {len(fix_data['startT'])} fixations")
                     
@@ -195,45 +168,16 @@ def detect_fixations(gaze_df: pd.DataFrame, screen_params: Dict = None) -> pd.Da
                         'end_time': fix_data['endT'],
                         'duration': fix_data['dur'],
                         'x_position': fix_data['xpos'],
-                        'y_position': fix_data['ypos']
-                    })
-                    
-                    # Success! Return the fixations
-                    return fixations
-                else:
-                    # First element didn't have expected structure
-                    if isinstance(fix_data, dict):
-                        print(f"Dictionary keys: {list(fix_data.keys())}")
-                    return pd.DataFrame()
-            else:
-                # Empty tuple returned
-                print("Empty tuple returned from I2MC")
-                return pd.DataFrame()
-        
-        # Handle other return types as a fallback
-        elif isinstance(fix_results, dict):
-            # Original dictionary handling (in case return type changes in the future)
-            if 'fix' in fix_results:
-                fix_data = fix_results['fix']
-                if isinstance(fix_data, dict) and 'startT' in fix_data:
-                    print(f"Detected {len(fix_data['startT'])} fixations")
-                    
-                    # Create fixation DataFrame
-                    fixations = pd.DataFrame({
-                        'start_time': fix_data['startT'],
-                        'end_time': fix_data['endT'],
-                        'duration': fix_data['dur'],
-                        'x_position': fix_data['xpos'],
-                        'y_position': fix_data['ypos']
+                        'y_position': fix_data['ypos'],
+                        'is_flanked_by_missing': fix_data['flankdataloss'],
+                        'fraction_interpolated': fix_data['fracinterped']
                     })
                     
                     return fixations
-            return pd.DataFrame()
         
-        # Unexpected return type - provide information for debugging
-        else:
-            print(f"Unexpected result type from I2MC: {type(fix_results)}")
-            return pd.DataFrame()
+        # If we get here, something went wrong
+        print("No fixations detected or unexpected result format")
+        return pd.DataFrame()
         
     except Exception as e:
         print(f"Error in fixation detection: {str(e)}")
