@@ -247,6 +247,13 @@ def create_action_summary_row(action_df: pd.DataFrame, session_id: str) -> pd.Se
         'validation_rounds': 0
     }
     
+    # Extract linking ID from questionnaire-linking events
+    linking_events = action_df[action_df['type'] == 'questionnaire-linking']
+    if not linking_events.empty:
+        summary['linking_id'] = linking_events.iloc[0]['value']
+    else:
+        summary['linking_id'] = None
+    
     # Extract validation metrics
     validation_rounds, validation_data = extract_validation_metrics(action_df)
     
