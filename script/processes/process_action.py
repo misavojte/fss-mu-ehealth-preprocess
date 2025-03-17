@@ -240,6 +240,10 @@ def create_action_summary_row(action_df: pd.DataFrame, session_id: str) -> pd.Se
         
     Returns:
         pd.Series: Summary row with metrics
+        
+    Note:
+        Unlike the fixation processing, this function does not save individual files per session.
+        All session data is collected and saved as a single summary file by the process_multiple_sessions function.
     """
     # Initialize with session ID
     summary = {
@@ -318,6 +322,48 @@ def create_action_summary_row(action_df: pd.DataFrame, session_id: str) -> pd.Se
     
     return pd.Series(summary)
 
+def standardize_datetime_format(df: pd.DataFrame) -> pd.DataFrame:
+    """
+    Standardize datetime columns in a DataFrame to match the format used in process_fixation.py.
+    
+    Args:
+        df (pd.DataFrame): DataFrame with potential datetime columns
+        
+    Returns:
+        pd.DataFrame: DataFrame with standardized datetime format
+    """
+    # Make a copy to avoid modifying the original
+    result_df = df.copy()
+    
+    # Find columns that likely contain datetime objects
+    datetime_cols = []
+    for col in result_df.columns:
+        # Check if column name suggests it contains a timestamp
+        if any(term in col.lower() for term in ['time', 'timestamp', 'date']):
+            # Check the first non-null value
+            non_null_vals = result_df[col].dropna()
+            if len(non_null_vals) > 0:
+                first_val = non_null_vals.iloc[0]
+                if isinstance(first_val, (pd.Timestamp, datetime)):
+                    datetime_cols.append(col)
+    
+    # Print debug info
+    if datetime_cols:
+        print(f"Standardizing datetime format for columns: {', '.join(datetime_cols)}")
+    
+    # Convert datetime columns to consistent format
+    for col in datetime_cols:
+        # Ensure columns are datetime objects first (in case they're strings)
+        if result_df[col].dtype != 'datetime64[ns]':
+            try:
+                result_df[col] = pd.to_datetime(result_df[col])
+            except:
+                # If conversion fails, skip this column
+                print(f"Warning: Could not convert column '{col}' to datetime")
+                continue
+    
+    return result_df
+
 def save_summary(summary_df: pd.DataFrame, base_name: str = "session_summaries") -> str:
     """
     Save the summary DataFrame to CSV with timestamp.
@@ -338,13 +384,19 @@ def save_summary(summary_df: pd.DataFrame, base_name: str = "session_summaries")
     filename = f"{base_name}_{timestamp}.csv"
     output_path = os.path.join(output_dir, filename)
     
-    # Save to CSV
-    summary_df.to_csv(output_path, index=False)
+    # Standardize datetime format to match process_fixation.py
+    standardized_df = standardize_datetime_format(summary_df)
+    
+    # Save to CSV with datetime format matching process_fixation.py
+    standardized_df.to_csv(output_path, index=False, date_format='%Y-%m-%d %H:%M:%S.%f')
+    
+    print(f"Saved summary with standardized datetime format to: {output_path}")
     return output_path
 
 def process_multiple_sessions(session_ids: list[str], 
                             action_data_dict: Dict[str, pd.DataFrame],
-                            save_output: bool = True) -> pd.DataFrame:
+                            save_output: bool = True,
+                            base_name: str = "action_summary") -> pd.DataFrame:
     """
     Process multiple session files and create a summary table.
     
@@ -352,9 +404,17 @@ def process_multiple_sessions(session_ids: list[str],
         session_ids (list[str]): List of session IDs to process
         action_data_dict (Dict[str, pd.DataFrame]): Dictionary mapping session_ids to their action DataFrames
         save_output (bool, optional): Whether to save the output to CSV. Defaults to True.
+        base_name (str, optional): Base name for the output file. Defaults to "action_summary".
         
     Returns:
         pd.DataFrame: Summary table where each row represents one session
+        
+    Note:
+        Unlike fixation processing, action processing intentionally only creates a single
+        summary file and NOT individual files per session. This design choice is made because:
+        1. Action data is typically analyzed at the summary level
+        2. The summary contains all necessary timing information for alignment with fixations
+        3. This approach reduces file clutter when processing many sessions
     """
     summaries = []
     for session_id in session_ids:
@@ -368,9 +428,9 @@ def process_multiple_sessions(session_ids: list[str],
     if not summary_df.empty:
         summary_df = summary_df.sort_values('session_id')
         
-        # Save if requested
+        # Save if requested - NOTE: We only save a single summary file, not individual files per session
         if save_output:
-            output_path = save_summary(summary_df)
+            output_path = save_summary(summary_df, base_name=base_name)
             print(f"\nSaved summary table to: {output_path}")
     
     return summary_df
