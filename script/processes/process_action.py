@@ -1,3 +1,48 @@
+"""
+Action Data Processing Module for eHealth Eye-tracking Study
+
+This module processes action log data from the eHealth eye-tracking study, extracting structured
+data from participant interactions with three experimental tasks and gaze validation.
+
+Data Structure Overview:
+-----------------------
+The module creates a single summary CSV file with the following data structure:
+
+1. Session identification:
+   - session_id: Unique identifier for the session
+   - linking_id: External ID linking to questionnaire data
+   - validation_rounds: Number of validation rounds completed
+
+2. L1 Task Data (Face Rating):
+   - Format: L1__t_XX_g__[startTime|endTime|value]
+   - XX: number from 01-32, g: gender (m/f)
+   - value: participant's rating of the face
+
+3. L2 Task Data (Item Assessment): 
+   - Format: L2__X__[startTime|endTime|value]
+   - X: item number (1-16)
+   - value: participant's response for the item
+
+4. L3 Task Data (Sequential Item Viewing):
+   - Format: L3__OX__[L2token|startTime|endTime|duration]
+   - OX: order position (O1-O4)
+   - L2token: which L2 item was shown
+   - duration: seconds spent viewing the item
+
+5. Validation Metrics:
+   - vali_point_X_[accuracy|precision|points]: metrics for each validation point
+   - vali_avg_[accuracy|precision|points]: average metrics across points
+
+All timestamps use standardized format 'YYYY-MM-DD HH:MM:SS.fff' for compatibility
+with fixation data and easy temporal alignment in analyses.
+
+Design Notes:
+------------
+- Creates a single summary file rather than individual files per session
+- Preserves all timing information needed to align with fixation data
+- Enables analysis of participant interactions across all three experimental tasks
+"""
+
 import pandas as pd
 import json
 import os
@@ -9,11 +54,32 @@ def extract_validation_metrics(action_df: pd.DataFrame) -> Tuple[int, pd.DataFra
     """
     Extract validation metrics from action log, finding the last chain of 5 validations.
     
+    Gaze validation is a critical quality control process where participants fixate on 
+    specific points on the screen to calibrate and verify the eye-tracker's accuracy.
+    
+    The validation process involves:
+    - Presenting 5 validation points on screen
+    - Measuring how accurately the participant fixates on each point
+    - Calculating accuracy (spatial error) and precision (stability) for each point
+    
+    This function extracts:
+    1. Total validation rounds conducted (each round = 5 points)
+    2. Metrics from the last validation points (usually 5 points)
+    
     Args:
-        action_df (pd.DataFrame): Raw action log data
+        action_df (pd.DataFrame): Raw action log data containing gaze-validation events
         
     Returns:
-        Tuple[int, pd.DataFrame]: (number of validation repetitions, validation points data)
+        Tuple[int, pd.DataFrame]: 
+            - Number of validation rounds completed (each round consists of 5 points)
+            - DataFrame containing validation metrics for the last 5 validation points
+              with columns: 'accuracy', 'precision', and 'points'
+              
+    Note:
+        - Accuracy measures the spatial offset between target and actual gaze position in pixels
+        - Precision measures the stability/jitter of the gaze in pixels
+        - Points indicates the number of gaze samples collected for each validation point
+        - Lower values for accuracy and precision indicate better eye-tracking quality
     """
     # Get all validation events
     validation_events = action_df[action_df['type'] == 'gaze-validation'].copy()
@@ -41,24 +107,27 @@ def extract_validation_metrics(action_df: pd.DataFrame) -> Tuple[int, pd.DataFra
 
 def extract_l1_token_data(action_df: pd.DataFrame) -> Dict[str, Dict[str, Union[str, int, float]]]:
     """
-    Extract L1 token data including start time, end time, and response value.
+    Extract L1 token data (face ratings) with timing and response values.
     
-    L1 tokens follow pattern t_XX_y where XX is a number and y is gender (m/f).
-    Each token has start event (L1_start) and response event (L1_response).
+    Processes L1 events where participants rate faces identified by tokens in format t_XX_g
+    (XX = number 01-32, g = gender m/f).
+    
+    Events processed:
+    - L1_start: When face is shown
+    - L1_response: When rating is submitted
     
     Args:
-        action_df (pd.DataFrame): Action log DataFrame
+        action_df (pd.DataFrame): Action log DataFrame with L1 events
         
     Returns:
-        Dict: Dictionary with token data in format:
-            {
-                "t_01_m": {
-                    "startTime": timestamp,
-                    "endTime": timestamp, 
-                    "value": int
-                },
-                ...
-            }
+        Dict: {
+            "t_01_m": {
+                "startTime": timestamp,  # Display time
+                "endTime": timestamp,    # Response time
+                "value": int             # Rating value
+            },
+            ...
+        }
     """
     # Define all possible tokens
     tokens = [f"t_{i:02d}_{g}" for i in range(1, 33) for g in ['m', 'f']]
@@ -103,24 +172,26 @@ def extract_l1_token_data(action_df: pd.DataFrame) -> Dict[str, Dict[str, Union[
 
 def extract_l2_token_data(action_df: pd.DataFrame) -> Dict[str, Dict[str, Union[str, int, float]]]:
     """
-    Extract L2 token data including start time, end time, and response value.
+    Extract L2 token data (item assessments) with timing and response values.
     
-    L2 tokens are simple numbers (1-16).
-    Each token has start event (L2_start) and response event (L2_response).
+    Processes L2 events where participants evaluate items identified by numbers 1-16.
+    
+    Events processed:
+    - L2_start: When item is shown
+    - L2_response: When evaluation is submitted
     
     Args:
-        action_df (pd.DataFrame): Action log DataFrame
+        action_df (pd.DataFrame): Action log DataFrame with L2 events
         
     Returns:
-        Dict: Dictionary with token data in format:
-            {
-                "1": {
-                    "startTime": timestamp,
-                    "endTime": timestamp, 
-                    "value": int
-                },
-                ...
-            }
+        Dict: {
+            "1": {
+                "startTime": timestamp,  # Display time
+                "endTime": timestamp,    # Response time
+                "value": int             # Assessment value
+            },
+            ...
+        }
     """
     # Define all possible tokens for L2 (1-16)
     possible_tokens = [str(i) for i in range(1, 17)]
@@ -169,29 +240,31 @@ def extract_l2_token_data(action_df: pd.DataFrame) -> Dict[str, Dict[str, Union[
 
 def extract_l3_token_data(action_df: pd.DataFrame) -> Dict[str, Dict[str, Union[str, int, float]]]:
     """
-    Extract L3 token data including start time and end time for each of the 4 ordered stops.
+    Extract L3 token data (sequential viewing of L2 items).
     
-    L3 has exactly 4 ordered stops (O1, O2, O3, O4) with start and end events.
-    The order is important and defined in the L3_init event.
+    Processes L3 events where participants view 4 items from L2 in sequence.
+    Each item is shown individually and disappears after confirmation.
+    
+    Events processed:
+    - L3_init: Defines the 4 L2 tokens to be shown
+    - L3_start: When an item is displayed
+    - L3_end: When viewing is confirmed
     
     Args:
-        action_df (pd.DataFrame): Action log DataFrame
+        action_df (pd.DataFrame): Action log DataFrame with L3 events
         
     Returns:
-        Dict: Dictionary with ordered stops data in format:
-            {
-                "O1": {
-                    "token": value, (e.g. "3")
-                    "startTime": timestamp,
-                    "endTime": timestamp
-                },
-                "O2": {...},
-                "O3": {...},
-                "O4": {...}
-            }
+        Dict: {
+            "O1": {
+                "token": "3",          # Which L2 item was shown first
+                "startTime": timestamp, # Display time
+                "endTime": timestamp    # Confirmation time
+            },
+            "O2": {...}, "O3": {...}, "O4": {...}
+        }
     """
-    # Initialize with the 4 ordered stops
-    ordered_stops = {f"O{i}": {"token": None, "startTime": None, "endTime": None} for i in range(1, 5)}
+    # Initialize with the 4 ordered items
+    ordered_items = {f"O{i}": {"token": None, "startTime": None, "endTime": None} for i in range(1, 5)}
     
     # Ensure timestamp is datetime
     if 'timestamp' in action_df.columns:
@@ -204,12 +277,12 @@ def extract_l3_token_data(action_df: pd.DataFrame) -> Dict[str, Dict[str, Union[
         tokens = init_event.iloc[0]['value'].split(';')
         # Store tokens in order (O1, O2, O3, O4)
         for i, token in enumerate(tokens[:4], 1):
-            ordered_stops[f"O{i}"]["token"] = token.strip()
+            ordered_items[f"O{i}"]["token"] = token.strip()
     
     # Extract start and end times
     for i in range(1, 5):
-        stop_key = f"O{i}"
-        token = ordered_stops[stop_key]["token"]
+        item_key = f"O{i}"
+        token = ordered_items[item_key]["token"]
         
         if token:
             # Find start event for this token
@@ -218,7 +291,7 @@ def extract_l3_token_data(action_df: pd.DataFrame) -> Dict[str, Dict[str, Union[
                 (action_df['value'] == token)
             ]
             if not start_event.empty:
-                ordered_stops[stop_key]["startTime"] = start_event.iloc[0]['timestamp']
+                ordered_items[item_key]["startTime"] = start_event.iloc[0]['timestamp']
             
             # Find end event for this token
             end_event = action_df[
@@ -226,24 +299,28 @@ def extract_l3_token_data(action_df: pd.DataFrame) -> Dict[str, Dict[str, Union[
                 (action_df['value'] == token)
             ]
             if not end_event.empty:
-                ordered_stops[stop_key]["endTime"] = end_event.iloc[0]['timestamp']
+                ordered_items[item_key]["endTime"] = end_event.iloc[0]['timestamp']
     
-    return ordered_stops
+    return ordered_items
 
 def create_action_summary_row(action_df: pd.DataFrame, session_id: str) -> pd.Series:
     """
-    Create a summary row for a single action log file.
+    Create a summary row for a single session containing all action metrics.
+    
+    Extracts and combines:
+    1. Session metadata (session_id, linking_id)
+    2. Validation metrics (accuracy and precision for each point)
+    3. L1 task data (face ratings with timing)
+    4. L2 task data (item assessments with timing)
+    5. L3 task data (sequential item viewing with timing)
     
     Args:
-        action_df (pd.DataFrame): Raw action log data
+        action_df (pd.DataFrame): Raw action log data for a session
         session_id (str): Session identifier
         
     Returns:
-        pd.Series: Summary row with metrics
-        
-    Note:
-        Unlike the fixation processing, this function does not save individual files per session.
-        All session data is collected and saved as a single summary file by the process_multiple_sessions function.
+        pd.Series: Single row containing all extracted metrics with standardized
+                  timestamps in format 'YYYY-MM-DD HH:MM:SS.fff'
     """
     # Initialize with session ID
     summary = {
@@ -326,11 +403,27 @@ def standardize_datetime_format(df: pd.DataFrame) -> pd.DataFrame:
     """
     Standardize datetime columns in a DataFrame to match the format used in process_fixation.py.
     
+    This function ensures that all timestamp columns in the action summary data use
+    a consistent datetime format that matches the fixation data. This standardization
+    is critical for:
+    
+    1. Proper alignment between action and fixation data during analysis
+    2. Accurate calculation of time-based metrics
+    3. Consistent formatting in output files
+    
+    The function automatically detects columns containing datetime objects by examining
+    column names and content, then converts them to a standardized format.
+    
     Args:
         df (pd.DataFrame): DataFrame with potential datetime columns
         
     Returns:
-        pd.DataFrame: DataFrame with standardized datetime format
+        pd.DataFrame: DataFrame with standardized datetime format (YYYY-MM-DD HH:MM:SS.fff)
+        
+    Note:
+        This standardization is particularly important when correlating behavioral events
+        from the action log with eye movements from the fixation data, as accurate
+        temporal alignment depends on compatible timestamp formats.
     """
     # Make a copy to avoid modifying the original
     result_df = df.copy()
@@ -366,14 +459,29 @@ def standardize_datetime_format(df: pd.DataFrame) -> pd.DataFrame:
 
 def save_summary(summary_df: pd.DataFrame, base_name: str = "session_summaries") -> str:
     """
-    Save the summary DataFrame to CSV with timestamp.
+    Save the action summary DataFrame to CSV with timestamp in filename.
+    
+    This function prepares the final action summary data for storage by:
+    1. Creating the output directory if it doesn't exist
+    2. Generating a timestamped filename to prevent overwriting previous outputs
+    3. Standardizing datetime formats across all columns
+    4. Saving the data in CSV format with consistent date formatting
+    
+    The resulting CSV file contains all behavioral data from the experimental tasks
+    and is ready for integration with fixation data in subsequent analyses.
     
     Args:
-        summary_df (pd.DataFrame): DataFrame to save
-        base_name (str): Base name for the file
+        summary_df (pd.DataFrame): Action summary DataFrame to save
+        base_name (str): Base name for the output file (default: "session_summaries")
         
     Returns:
         str: Path to the saved file
+        
+    Note:
+        The output uses the standardized datetime format 'YYYY-MM-DD HH:MM:SS.fff'
+        to ensure compatibility with fixation data in the analysis pipeline.
+        All timestamps are preserved with microsecond precision for accurate
+        temporal alignment between behavioral events and eye movements.
     """
     # Create output directory if it doesn't exist
     output_dir = "outputs"
@@ -398,23 +506,26 @@ def process_multiple_sessions(session_ids: list[str],
                             save_output: bool = True,
                             base_name: str = "action_summary") -> pd.DataFrame:
     """
-    Process multiple session files and create a summary table.
+    Process multiple sessions and create a single summary table of action data.
+    
+    Main entry point that:
+    1. Iterates through provided session IDs
+    2. Extracts metrics for each session (validation, L1, L2, L3)
+    3. Combines into one summary DataFrame
+    4. Saves as CSV with standardized timestamps
     
     Args:
         session_ids (list[str]): List of session IDs to process
-        action_data_dict (Dict[str, pd.DataFrame]): Dictionary mapping session_ids to their action DataFrames
-        save_output (bool, optional): Whether to save the output to CSV. Defaults to True.
-        base_name (str, optional): Base name for the output file. Defaults to "action_summary".
+        action_data_dict (Dict[str, pd.DataFrame]): Map of session_ids to action DataFrames
+        save_output (bool): Whether to save CSV output (default: True)
+        base_name (str): Base filename (default: "action_summary")
         
     Returns:
-        pd.DataFrame: Summary table where each row represents one session
-        
-    Note:
-        Unlike fixation processing, action processing intentionally only creates a single
-        summary file and NOT individual files per session. This design choice is made because:
-        1. Action data is typically analyzed at the summary level
-        2. The summary contains all necessary timing information for alignment with fixations
-        3. This approach reduces file clutter when processing many sessions
+        pd.DataFrame: Summary table with one row per session
+    
+    Notes:
+        - Creates a single summary file rather than individual files per session
+        - Enables correlation between action data and eye-tracking fixations
     """
     summaries = []
     for session_id in session_ids:
