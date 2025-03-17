@@ -18,7 +18,7 @@ Individual CSV files for each session containing detected eye fixations. These a
 - `duration`: Duration of the fixation in milliseconds. This is a key metric for analyzing attention patterns.
 - `x_position`, `y_position`: Screen coordinates of the fixation. These can be used for spatial analysis of visual attention.
 - `is_flanked_by_missing`, `fraction_interpolated`: Technical quality indicators about the fixation data.
-- `start_timestamp`, `end_timestamp`: Actual timestamps in 'YYYY-MM-DD HH:MM:SS.fff' format that correspond to when each fixation occurred. These are crucial for matching fixations with specific actions or tasks. You can use them to query specific time periods (e.g., to count fixations during a particular task, find the timestamp when it started/ended and filter accordingly).
+- `start_timestamp`, `end_timestamp`: Actual timestamps in 'YYYY-MM-DD HH:MM:SS.fff' format that correspond to **when corresponding gaze points were captured by the system**. These are crucial for matching fixations with specific actions or tasks. You can use them to query specific time periods (e.g., to count fixations during a particular task, find the timestamp when it started/ended and filter accordingly).
 - `aoi`: Area of Interest where the fixation occurred. Note that a fixation might be associated with multiple AOIs simultaneously if they overlap.
 
 **Usage in R:**
