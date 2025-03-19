@@ -3,16 +3,13 @@ import os
 sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 from loaders import load_ehealth_data, load_session_ids
-from processes.process_fixation import process_multiple_gaze_sessions
+from script.processes.process_fixation import process_multiple_gaze_sessions
 import pandas as pd
-import random
-import numpy as np
 
 def main():
     # Get all available session IDs
     print("\n=== Loading Session IDs ===")
-    # session_ids = load_session_ids()
-    session_ids = ["1731573239729-3024"]
+    session_ids = load_session_ids()
     
     if not session_ids:
         print("No sessions found!")
@@ -32,12 +29,7 @@ def main():
     
     # Process all sessions
     print("\n=== Processing Gaze Data ===")
-    
-    # Set a random seed before processing to ensure deterministic results
-    random.seed(42)
-    np.random.seed(42)
-    
-    summary_df = process_multiple_gaze_sessions(session_ids, gaze_data_dict, False)
+    summary_df = process_multiple_gaze_sessions(session_ids, gaze_data_dict, True)
     
     # Display results
     if not summary_df.empty:
