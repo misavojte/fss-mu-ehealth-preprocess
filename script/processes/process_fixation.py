@@ -171,6 +171,10 @@ def prepare_data_real_timestamps(
     data_df['average_X'] = df[x_column].copy()
     data_df['average_Y'] = df[y_column].copy()
     
+    # Add AOI column if it exists
+    if 'aoi' in df.columns:
+        data_df['aoi'] = df['aoi'].copy()
+    
     # Make sure missing column is created correctly
     # I2MC expects a boolean array where True = missing data
     # First ensure we have proper missing data flags
@@ -269,6 +273,10 @@ def prepare_data_fixed_frequency(
     data_df['average_X'] = df[x_column].copy()
     data_df['average_Y'] = df[y_column].copy()
     
+    # Add AOI column if it exists
+    if 'aoi' in df.columns:
+        data_df['aoi'] = df['aoi'].copy()
+    
     # Make sure missing column is created correctly
     # I2MC expects a boolean array where True = missing data
     # First ensure we have proper missing data flags
@@ -318,7 +326,7 @@ def detect_fixations(
     
     Args:
         gaze_df (pd.DataFrame): Preprocessed gaze data with columns:
-            time_ms, x, y, missing
+            time_ms, x, y, missing, aoi
         i2mc_options (Dict, optional): Dictionary containing all I2MC algorithm parameters.
             If None, uses default values as specified below.
         use_real_timestamps (bool): Whether to use real timestamps (True) or fixed frequency (False)
@@ -326,7 +334,7 @@ def detect_fixations(
         fixed_frequency (float): Assumed sampling frequency in Hz (if use_real_timestamps=False)
             
     Returns:
-        pd.DataFrame: Detected fixations with their properties, including original start timestamps
+        pd.DataFrame: Detected fixations with their properties, including original start timestamps and AOI
     """
     # Setup default I2MC parameters if not provided
     if i2mc_options is None:
@@ -453,6 +461,11 @@ def detect_fixations(
                         'is_flanked_by_missing': fix_data['flankdataloss'],
                         'fraction_interpolated': fix_data['fracinterped']
                     })
+                    
+                    # Add AOI information based on fixation start indices
+                    if 'aoi' in data_df.columns:
+                        fix_indices_start = fix_data['start']
+                        fixations['aoi'] = data_df['aoi'].values[fix_indices_start]
                     
                     # Map fixation start/end indices to original timestamps if available
                     if 'original_timestamp' in data_df.columns:
