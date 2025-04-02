@@ -367,7 +367,7 @@ STIMULUS_BOUNDING_BOXES = {
 }
 
 # Define bounding boxes for other stimuli (t_31_m, etc.)
-OTHER_STIMULUS_BOUNDING_BOXES = {
+OTHER_STIMULUS_BOUNDING_BOXES_OLD = {
     "likert": {"topLeft": (616, 721), "bottomRight": (1304, 969)},
     "image": {"topLeft": (776, 231), "bottomRight": (904, 359)},
     "title": {"topLeft": (936, 240), "bottomRight": (1144, 268)},
@@ -385,34 +385,52 @@ OTHER_STIMULUS_BOUNDING_BOXES = {
     "stars_1_text": {"topLeft": (1002, 604), "bottomRight": (1074, 628)},
 }
 
-def is_point_in_bbox(point: Tuple[float, float], bbox: Dict[str, Tuple[int, int]]) -> bool:
+# these are already with tolerance!!!
+OTHER_STIMULUS_BOUNDING_BOXES = {
+    "likert": {"topLeft": (474, 654), "bottomRight": (1182, 922)},
+    "image": {"topLeft": (634, 154), "bottomRight": (782, 312)},
+    "mainRating": {"topLeft": (794, 217), "bottomRight": (1022, 263)},
+    "numberOfReviews": {"topLeft": (794, 259), "bottomRight": (1022, 313)},
+    "title": {"topLeft": (794, 153), "bottomRight": (1022, 221)},
+    "distributionStars": {"topLeft": (704, 368), "bottomRight": (864, 582)},
+    "distributionText": {"topLeft": (860, 369), "bottomRight": (952, 581)}
+}
+
+
+def is_point_in_bbox(point: Tuple[float, float], bbox: Dict[str, Tuple[int, int]], tolerance: int = 10) -> bool:
     """
-    Check if a point is inside a bounding box.
+    Check if a point is inside a bounding box with optional tolerance.
     
     Args:
         point (Tuple[float, float]): (x, y) coordinates of the point
         bbox (Dict[str, Tuple[int, int]]): Bounding box with topLeft and bottomRight coordinates
+        tolerance (int): Number of pixels to expand the bounding box in all directions
         
     Returns:
-        bool: True if point is inside the bounding box, False otherwise
+        bool: True if point is inside the expanded bounding box, False otherwise
     """
     x, y = point
     top_left = bbox["topLeft"]
     bottom_right = bbox["bottomRight"]
     
-    return (top_left[0] <= x <= bottom_right[0] and 
-            top_left[1] <= y <= bottom_right[1])
+    # Expand the bounding box by tolerance pixels in all directions
+    expanded_top_left = (top_left[0] - tolerance, top_left[1] - tolerance)
+    expanded_bottom_right = (bottom_right[0] + tolerance, bottom_right[1] + tolerance)
+    
+    return (expanded_top_left[0] <= x <= expanded_bottom_right[0] and 
+            expanded_top_left[1] <= y <= expanded_bottom_right[1])
 
-def get_aoi_for_point(point: Tuple[float, float], stimulus_id: str) -> Optional[str]:
+def get_aoi_for_point(point: Tuple[float, float], stimulus_id: str, tolerance: int = 10) -> Optional[List[str]]:
     """
-    Determine which AOI a point belongs to based on the stimulus ID and bounding boxes.
+    Determine which AOIs a point belongs to based on the stimulus ID and bounding boxes.
     
     Args:
         point (Tuple[float, float]): (x, y) coordinates of the point
         stimulus_id (str): ID of the stimulus
+        tolerance (int): Number of pixels to expand bounding boxes in all directions
         
     Returns:
-        Optional[str]: Name of the AOI if point is inside any bounding box, None otherwise
+        Optional[List[str]]: List of AOI names if point is inside any bounding boxes, None otherwise
     """
     if not stimulus_id:
         return None
@@ -429,19 +447,21 @@ def get_aoi_for_point(point: Tuple[float, float], stimulus_id: str) -> Optional[
         # If conversion fails, use OTHER_STIMULUS_BOUNDING_BOXES
         bboxes = OTHER_STIMULUS_BOUNDING_BOXES
     
-    # Check each bounding box
+    # Check each bounding box with tolerance and collect all intersecting AOIs
+    intersecting_aois = []
     for aoi_name, bbox in bboxes.items():
-        if is_point_in_bbox(point, bbox):
-            return aoi_name
+        if is_point_in_bbox(point, bbox, tolerance):
+            intersecting_aois.append(aoi_name)
     
-    return None
+    return intersecting_aois if intersecting_aois else None
 
-def process_external_aoi_bb(save_output: bool = True) -> pd.DataFrame:
+def process_external_aoi_bb(save_output: bool = True, tolerance: int = 10) -> pd.DataFrame:
     """
     Process fixation insights to add AOI information based on bounding boxes.
     
     Args:
         save_output (bool): Whether to save the processed data to a CSV file
+        tolerance (int): Number of pixels to expand bounding boxes in all directions
         
     Returns:
         pd.DataFrame: Processed fixation insights with AOI information
@@ -466,14 +486,28 @@ def process_external_aoi_bb(save_output: bool = True) -> pd.DataFrame:
         df = pd.read_csv(latest_file)
         print(f"Loaded {len(df)} fixation insights")
         
-        # Process each row to add AOI information
+        # Process each row to add AOI information with tolerance
         df['aoi'] = df.apply(
             lambda row: get_aoi_for_point(
                 (row['x_position'], row['y_position']),
-                str(row['stimulus']) if pd.notna(row['stimulus']) else None
+                str(row['stimulus']) if pd.notna(row['stimulus']) else None,
+                tolerance
             ),
             axis=1
         )
+        
+        # Add columns for individual AOIs
+        df['aoi_count'] = df['aoi'].apply(lambda x: len(x) if isinstance(x, list) else 0)
+        df['aoi_list'] = df['aoi'].apply(lambda x: ','.join(x) if isinstance(x, list) else '')
+        
+        # Add individual AOI columns
+        all_aois = set()
+        for aois in df['aoi'].dropna():
+            if isinstance(aois, list):
+                all_aois.update(aois)
+        
+        for aoi in all_aois:
+            df[f'aoi_{aoi}'] = df['aoi'].apply(lambda x: 1 if isinstance(x, list) and aoi in x else 0)
         
         if save_output:
             # Generate output filename with timestamp
@@ -483,6 +517,15 @@ def process_external_aoi_bb(save_output: bool = True) -> pd.DataFrame:
             # Save the processed data
             df.to_csv(output_file, index=False)
             print(f"Saved processed data to {output_file}")
+            
+            # Print summary statistics
+            print("\nAOI Intersection Statistics:")
+            print(f"Total fixations: {len(df)}")
+            print(f"Fixations with AOI intersections: {df['aoi_count'].gt(0).sum()}")
+            print("\nAOI intersection counts:")
+            for aoi in all_aois:
+                count = df[f'aoi_{aoi}'].sum()
+                print(f"{aoi}: {count} fixations")
         
         return df
         
