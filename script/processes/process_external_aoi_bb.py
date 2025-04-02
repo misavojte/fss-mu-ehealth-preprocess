@@ -427,7 +427,7 @@ def get_aoi_for_point(point: Tuple[float, float], stimulus_id: str, tolerance: i
     Args:
         point (Tuple[float, float]): (x, y) coordinates of the point
         stimulus_id (str): ID of the stimulus
-        tolerance (int): Number of pixels to expand bounding boxes in all directions
+        tolerance (int): Number of pixels to expand bounding boxes in all directions (only applied to STIMULUS_BOUNDING_BOXES)
         
     Returns:
         Optional[List[str]]: List of AOI names if point is inside any bounding boxes, None otherwise
@@ -440,17 +440,23 @@ def get_aoi_for_point(point: Tuple[float, float], stimulus_id: str, tolerance: i
         stimulus_int = int(stimulus_id)
         if stimulus_int in STIMULUS_BOUNDING_BOXES:
             bboxes = STIMULUS_BOUNDING_BOXES[stimulus_int]
+            # Apply tolerance of 10 for STIMULUS_BOUNDING_BOXES
+            applied_tolerance = tolerance
         else:
             # For other stimuli (t_31_m, etc.)
             bboxes = OTHER_STIMULUS_BOUNDING_BOXES
+            # Apply no tolerance (0) for OTHER_STIMULUS_BOUNDING_BOXES
+            applied_tolerance = 0
     except (ValueError, TypeError):
         # If conversion fails, use OTHER_STIMULUS_BOUNDING_BOXES
         bboxes = OTHER_STIMULUS_BOUNDING_BOXES
+        # Apply no tolerance (0) for OTHER_STIMULUS_BOUNDING_BOXES
+        applied_tolerance = 0
     
-    # Check each bounding box with tolerance and collect all intersecting AOIs
+    # Check each bounding box with appropriate tolerance and collect all intersecting AOIs
     intersecting_aois = []
     for aoi_name, bbox in bboxes.items():
-        if is_point_in_bbox(point, bbox, tolerance):
+        if is_point_in_bbox(point, bbox, applied_tolerance):
             intersecting_aois.append(aoi_name)
     
     return intersecting_aois if intersecting_aois else None
